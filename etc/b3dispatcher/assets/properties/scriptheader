@@ -1,0 +1,71 @@
+#!/bin/bash
+
+########################################################################################
+#Script Name : B3 Dispatcher Tool - SFTP Streamer
+#Description : Tool to transfer files between My Company and B3 via SFTP protocol.   
+#Author      : Wiliam Freitas
+#Email       : wiliamjf@gmail.com
+########################################################################################
+
+# Verifica se o arquivo de configuracoes existe:
+
+if [ -e "/usr/local/etc/b3dispatcher/assets/config/b3dispatcher.conf" ]; then
+
+    # Se o arquivo existir, carrega as configuracoes:
+    . /usr/local/etc/b3dispatcher/assets/config/b3dispatcher.conf
+
+else
+
+    # Se o arquivo nao existir, reporta erro e aborta execucao:
+    echo -e "\nErro: Arquivo de configuracoes nao foi localizado.\n"
+    exit 1
+
+fi
+
+if [[ $(mount | grep $templates > /dev/null) ]]; then
+
+    echo -e "\n${red}Erro critico!\n${nc}"
+    echo -e "${ylw}O storage nao esta montado em ${templates}.${nc}"
+    echo -e "\n${red}Abordando execucao da tool.\n${nc}"
+    exit 1
+
+fi
+
+kill_exec="0"
+critical_error="0"
+
+for sysdir in $(echo $system_dir | sed -e "s/,//g"); do
+
+    if [ ! -d $sysdir ]; then
+
+        critical_error="$((critical_error+1))"
+
+        case $critical_error in
+            1) echo -e "\n${red}Erro critico!\n${nc}" ;;
+        esac
+
+        echo -e "${ylw}Diretorio $sysdir nao encontrado.${nc}"
+        kill_exec="1"
+
+    fi ; done
+
+if [ "$kill_exec" -eq "1" ]; then
+
+    echo -e "\n${red}Abordando execucao da tool.\n${nc}"
+    exit 1
+
+fi
+
+# Verifica se o arquivo de funcoes existe:
+if [ -e "${functions_home}/functions" ]; then
+
+    # Se o arquivo existir, carrega as funcoes:
+    . ${functions_home}/functions
+
+else
+
+    # Se o arquivo nao existir, reporta erro e aborta execucao:
+    echo -e "\n${red}Erro: Arquivo de funcoes nao foi localizado.${nc}\n"
+    exit 1
+
+fi

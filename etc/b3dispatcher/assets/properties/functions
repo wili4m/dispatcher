@@ -1,0 +1,696 @@
+#!/usr/bin/bash
+
+########################################################################################
+#Script Name : B3 Dispatcher Tool - SFTP Streamer
+#Description : Tool to transfer files between My Company and B3 via SFTP protocol.   
+#Author      : Wiliam Freitas
+#Email       : wiliamjf@gmail.com
+#Date        : 2022-03-23
+########################################################################################
+
+# Verifica se o arquivo de configuracoes existe:
+
+if [ -e "/usr/local/etc/b3dispatcher/assets/config/b3dispatcher.conf" ]; then
+
+    # Se o arquivo existir, carrega as configuracoes:
+
+    . /usr/local/etc/b3dispatcher/assets/config/b3dispatcher.conf
+
+else
+
+    # Caso nao exista, aborta execucao exibindo erro na tela:
+    echo -e "\nErro: Arquivo de configuracoes nao foi localizado.\n"
+    exit 1
+
+fi
+
+# Esta function eh utilizada para logar mensagens no log do sistema. As variaveis actionlog
+# e messagelog sao alimentadas em tempo de execucao pelos snippets, que por sua vez chamam
+# esta function. Os logs ficam no /var/log e podem ser syslog (debian) ou messages (centos).
+
+function logmein() {
+
+    # Comando utilizado para logar mensagens no log do sistema:
+    logger -t [${tool_name}] "[${actionlog}] ${messagelog}"
+
+}
+
+function get_lock() {
+
+actionlog="get_lock"
+messagelog="Verificando se existe lock file."
+logmein
+
+# Verifica se o lock file existe:
+if [ -e "${lockfile}" ]; then
+
+    # Carrega o PID contindo no lockfile
+    b3pid=$(cat ${lockfile})
+
+    # Verifica se o PID do lockfile existe:
+    findPID=$(ps aux | grep $b3pid | grep -v grep | awk '{print$2}')
+
+    # Se nao houver PID no lockfile, grava o PID da execucao atual no lockfile
+    if [ -z $b3pid ]; then
+
+        echo $$ > ${lockfile}
+
+        actionlog="get_lock"
+        messagelog="Nao ha execucoes no momento. Atualizado o lock file."
+        logmein
+
+    # Se houver PID no lockfile, mas nao existir, tb grava o PID da execucao atual no lockfile:
+    elif [ -z $findPID ] ; then
+
+        echo $$ > ${lockfile}
+
+        actionlog="get_lock"
+        messagelog="Nao ha execucoes no momento. Atualizado o lock file."
+        logmein
+
+    # Se o PID do lockfile for diferente do atual PID e esse PID existir, considera-se que ha processo em execucao:
+    elif [ $b3pid -ne "$$" ] && [ ! -z $findPID ]; then
+
+        echo -e "\n${ylw}>>> Processo abortado${nc}: Ja existe um processo $b3pid em execucao. Aguarde o seu encerramento.\n"
+
+        actionlog="get_lock"
+        messagelog="Encontrado PID $b3pid em execucao. Nova execucao abortada."
+        logmein
+
+        exit 1
+
+    # Caso nenhum dos cenarios acima ocorra, entra no else. Pouco provavel que ocorra:
+    else
+
+        actionlog="get_lock"
+        messagelog="Erro ao identificar processos em andamento."
+        logmein
+
+        exit 1
+
+    fi
+
+else
+
+    # Caso o arquivo de lock nao exista, o cria com o PID:
+    echo $$ > ${lockfile}
+
+fi
+
+}
+
+function del_lock() {
+
+actionlog="del_lock"
+messagelog="Removendo lock file ${lockfile}."
+logmein
+
+    # Verifica se ha lock file:
+    if [ -f "${lockfile}" ]; then
+
+        # Remove o arquivo de lock:
+        rm -f ${lockfile}
+
+        # Logs:
+        case $? in
+        0) actionlog="del_lock" ;
+           messagelog="Lock file ${lockfile} removido." ;
+           logmein ;;
+        *) actionlog="del_lock" ;
+           messagelog="Falha na remocao do lock file ${lockfile}." ;
+           logmein ;;
+        esac
+
+    fi
+
+}
+
+function tail_logs() {
+
+actionlog="tail_logs"
+messagelog="Exibindo logs do b3dispatcher via tool."
+logmein
+
+if [[ $(cat /etc/os-release  | grep ^"NAME" | cut -d= -f2 | grep -i "oracle\|centos\|redhat") ]]; then
+    
+    tail -f /var/log/messages | grep b3dispatcher --color
+
+else
+
+    tail -f /var/log/syslog | grep b3dispatcher --color
+
+fi
+
+}
+
+function show_reports() {
+
+# Se houver arquivos no diretorio largefiles, significa que a validacao moveu arquivos do inputdir:
+if [[ $(find ${largefiles_dir} | wc -l) -ge 2 ]]; then
+
+    # Exibe barra:
+    function_include_bar ;
+    echo -e "\n${pur}>>> Report do Dispatcher: Tamanho de arquivos${nc}"
+    function_include_bar
+    echo ''
+    echo -e "\n${ylw}Descricao: Os seguintes arquivos nao passaram na validacao do Dispatcher e nao foram enviados para a B3.${nc}"
+    echo -e "${ylw}Motivacao: Arquivos vazios, sem conteudo para a B3 ou arquivos com tamanho superior a ${maxfilesize}MB.${nc}\n"
+
+    # Para cada arquivo no largefiles:
+    for file in $(ls ${largefiles_dir}); do
+
+        echo -e "${pur}>>>${nc} ${cyn}Nome do Arquivo:${nc} ${file}"
+        echo -e "${pur}>>>${nc} ${cyn}Path do arquivo:${nc} ${largefiles_dir}/${nc}\n" ;  done
+
+fi
+
+# Se houver arquivos no diretorio: 
+if [[ $(find ${failed_dir} | wc -l) -ge 2 ]]; then
+
+    # Barrinha estilosa:
+    function_include_bar ;
+    echo -e "\n${pur}>>> Report do Dispatcher: Nomenclatura fora do padrao.${nc}"
+    function_include_bar
+    echo ''
+    echo -e "\n${ylw}Descricao: Os seguintes arquivos nao passaram na validacao do Dispatcher e nao foram enviados para a B3.${nc}"
+    echo -e "${ylw}Motivacao: Arquivos com nomenclatura fora do padrao aceito pelo Dispatcher.${nc}\n"
+
+    # Lacinho para exibir erros de arquivos com nomes inapropriados:
+    for file in $(ls ${failed_dir}); do
+
+        echo -e "${pur}>>>${nc} ${cyn}Nome do Arquivo:${nc} ${file}"
+        echo -e "${pur}>>>${nc} ${cyn}Path do arquivo:${nc} ${failed_dir}/${nc}\n";  done
+
+fi
+
+# Verifica se ha arquivos no diretorio:
+if [[ $(find ${sent_files_failure_report_dir} | wc -l) -ge 2 ]]; then
+
+    # Barrinha bonita:
+    function_include_bar ;
+    echo -e "\n${pur}>>> Report da B3: Conteudo reportado pela B3.${nc}"
+    function_include_bar
+    echo ''
+    echo -e "\n${ylw}Descricao: Os seguintes arquivos foram enviados para a B3, mas a B3 reportou apontamentos no conteudo.${nc}"
+    echo -e "${ylw}Motivacao: Arquivos com conteudo mal formatado, fora do padrao aceito pela B3, etc.${nc}\n"
+
+    # Laco para exibir arquivos com report de falha da B3:
+    for file in $(ls ${sent_files_failure_report_dir} | grep '.txt'$); do
+
+        file_reported=$(ls -1 $sent_files_failure_report_dir | grep $file | grep -v '.txt'$ | tail -n1)
+
+        echo -e "${pur}>>>${nc} ${cyn}Arquivo Enviado para a B3:${nc} ${file}"
+        echo -e "${pur}>>>${nc} ${cyn}Arquivo Reportado pela B3:${nc} ${file_reported}"
+        echo -e "${pur}>>>${nc} ${cyn}Path dos arquivos:${nc} ${sent_files_failure_report_dir}/${nc}\n";  done
+
+fi
+
+}
+
+# Function para calcular tempo de execucao da ferramenta:
+
+function function_calculate_execution_time() {
+
+    # Determina a hora final da execucao:
+    finish_execution_hour=$(date +%H)
+
+    # Determina a hora inicial da execucao:
+    finish_execution_minute=$(date +%M)
+
+    # Verifica se o minuto final de execucao eh menor do que o minuto inicial:
+    if [ "$finish_execution_minute" -lt "$start_execution_minute" ]; then
+
+        # Se sim, subtrai o valor 1 da hora final de execucao:
+        finish_execution_hour=$(echo "$finish_execution_hour - 1" | bc)
+
+        # Subtrai o valor minuto final de minuto inicial:
+        finish_execution_minute_sub=$(echo "$start_execution_minute - $finish_execution_minute" | bc)
+
+        # Determina o valor de minutos subtraindo o valor obtido da subtracao de minuto inicial e minuto final
+        total_minutes=$(echo "60 - $finish_execution_minute_sub" | bc)
+
+    # Caso minuto final e minuto inicial sejam iguais, apenas seta valor 0
+    elif [ "$finish_execution_minute" -eq "$start_execution_minute" ]; then
+
+        total_minutes="0"
+
+    else
+
+        # Caso minuto final seja maior do que minuto inicial, apenas subtrai minuto inicial de minuto final.
+        total_minutes=$(echo "$finish_execution_minute - $start_execution_minute" | bc)
+
+    fi
+
+    # Verifica se a hora final de execucao eh menor do que a hora inicial:
+    if [ "$finish_execution_hour" -lt "$start_execution_hour" ]; then
+
+        # Subtrai o valor hora final de hora inicial:
+        finish_execution_hour_sub=$(echo "$start_execution_hour - $finish_execution_hour" | bc)
+
+        # Determina o valor de horas subtraindo o valor obtido da subtracao de hora inicial e hora final
+        total_hours=$(echo "24 - $finish_execution_hour_sub" | bc)
+
+    # Caso hora final e hora inicial sejam iguais, apenas seta valor 0
+    elif [ "$finish_execution_hour" -eq "$start_execution_hour" ]; then
+
+        total_hours=0
+
+    else
+
+        # Caso hora final seja maior do que hora inicial, apenas subtrai hora inicial de hora final.
+        total_hours=$(echo "$finish_execution_hour - $start_execution_hour" | bc)
+
+    fi
+
+    # Loga hora e minuto do inicio da execucao:
+    action="function_calculate_execution_time"
+    messagelog="Inicio da Execucao: ${start_execution_hour}:${start_execution_minute}"
+    logmein
+
+    # Loga hora e minuto do fim da execucao:
+    action="function_calculate_execution_time"
+    messagelog="Fim da Execucao: ${finish_execution_hour}:${finish_execution_minute}"
+    logmein
+
+    # Loga tempo total de execucao:
+    action="function_calculate_execution_time"
+    messagelog="Tempo total de Execucao: $total_hours hora(s) e $total_minutes minuto(s)"
+    logmein
+
+}
+
+# Essa function eh utilizada nos snippets para evitar que esses sejam executados de forma
+# direta, ou seja, sem passar pela tool. Somente a tool pode executar os snippets, pois a
+# execucao direta de snippets pode gerar comportamentos inexperados.
+
+function block_snippet_exec() {
+
+    action="block_snippet_exec"
+    messagelog="Checando permissao para execucao de Snippets."
+    logmein
+
+    # Verifica o path do binario requisitor do snippet.
+    # Se for diferente da ferramenta, apresenta erro.
+
+    # Somente 3 utilitarios podem executar snippets:
+
+    # b3dispatcher
+    if [ $0 != "${tool}" ]; then
+
+        # b3cli
+        if [ $0 != "${cli}" ]; then
+
+            # b3cron
+            if [ $0 != "${tool_cron}" ]; then
+
+                # Qualquer coisa diferente dos utilitarios, eh bloqueado.
+                action="Erro"
+                messagelog="Execucao de Snippet negada."
+                logmein
+
+                action="Warn"
+                messagelog="Somente ${tool}, ${cli} e ${tool_cron} podem executar Snippets."
+                logmein
+
+                echo -e "\n${ylw}Execucao de snippet negada. Vide log.${nc}\n"
+                exit 1
+
+            else
+
+                # Se entrar aqui, ta tudo certo.
+                action="Info"
+                messagelog="Execucao de Snippet autorizada."
+                logmein
+
+            fi
+
+        else
+
+            # Se entrar aqui, ta tudo certo.
+            action="Info"
+            messagelog="Execucao de Snippet autorizada."
+            logmein
+
+        fi
+
+    else
+
+        # Se entrar aqui, ta tudo certo.
+        action="Info"
+        messagelog="Execucao de Snippet autorizada."
+        logmein
+
+    fi
+
+}
+
+# Function que cria variaveis em tempo de execucao. Essas vars usam o valor de variaveis predispostas no arquivo de configuracao.
+# Porem determina qual variavel utilizara com base no nome do arquivo/Cia.
+
+function func_refeed_var_credentials() {
+
+    # Verifica da empresa presente no arquivo de configuracoes e remove a virgula
+    for empresaID in $(echo $empresas | sed -e "s/,/ /g") ; do
+
+        # Printa arquivos encontrado no diretorio de envio para a B3, verifica se o nome do arquivo
+        # comeca com o ID da empresa.
+        if [[ $(echo $fileFound | grep ^$empresaID) ]]; then
+    
+            # Declara o ID da empresa para contactenar com o valor de modal e criar a variavel de conexao:
+            declare empresaID=$empresaID
+
+            # Loga Informacao:
+            action="Info"
+            messagelog="Determinando credenciais para Cia ${empresaID}."
+            logmein
+
+            # Atribui o valor das variaveis modal e empresaid para determinar o valor das vars
+            # de acesso. Essas vars ja possuem valor na configuracao da tool. Aqui so eh determinada
+            # qual dessas vars sera usada baseado na Cia presente no nome do arquivo:
+            host=${modal}_target_empresa_${empresaID}
+            user=${modal}_userid_empresa_${empresaID}
+            pass=${modal}_rsakey_empresa_${empresaID}
+    
+            # Verifica o valor atribuido as variaveis criadas acima:
+            for checkVar in host user pass; do
+
+                # Declara checkVarValue para pegar o valor atribuido as vars criadas em tempo de execucao:
+                declare checkVarValue=$checkVar
+
+                # Verifica o valor das variaveis. Devem comecar com o modal que corresponde ao ambiente:
+                if [ $(echo ${!checkVarValue} | grep -v ^${modal}) ]; then
+
+                    # Se entrou aqui eh pq a variavel esta com valor invalido ou nulo. Pode ocorre pq:
+                    # O modal esta errado ou nao existe. Checar variavel modal no arquivo de configuracao
+                    # A empresa esta errada na configuracao ou no nome do arquivo ou nao existe.
+                    # Nome das variaveis de credenciais nao estao de acordo com o padrao da tool.
+                    action="Erro"
+                    messagelog="Variavel ${!checkVarValue}} eh invalida."
+                    logmein
+
+                    action="Erro"
+                    messagelog="Verificar configuracao (modal, empresas e credenciais)."
+                    logmein
+
+                else
+
+                    # Se entrou aqui, ta tudo certo com as variaveis criadas em tempo de execucao.
+                    action="Info"
+                    messagelog="Determinanda variavel ${!checkVarValue}}."
+                    logmein
+
+                fi; done
+
+        fi ; done 
+
+}
+
+# Function utilizada para checar se o Snippet existe:
+
+function check_snippet_if_exists() {
+
+    action="check_snippet_if_exists"
+    messagelog="Verificando se snippet $snippet existe."
+    logmein
+
+    if [ ! -e $snippets ]; then
+
+        action="Erro"
+        messagelog="O snippet requisitado nao existe."
+        logmein
+
+        # Exibe a mensagem abaixo caso o snippet nao seja localizado:
+        echo -e "\n${red}Erro: Snippet $snippet nao localizado.${nc}\n"
+	    exit 1
+
+    fi
+
+}
+
+# Function utilizada para exibir uma barra formada por caracteres "="
+
+function_include_bar () {
+
+    i="0"
+
+    while [ $i -lt 60 ]
+    do
+    echo -n "~"
+    i=$[$i+1]
+    done
+
+}
+
+function set_sleep_to_recollect() {
+
+        action="set_sleep_to_recollect"
+        messagelog="Executando function de coleta de reports na B3."
+        logmein
+
+    # Verifica se a variavel esta com valor. Se nao, seta valor default de 15 minutos:
+    if [ -z "$waiting_collect_interval" ]; then
+
+        action="Aviso"
+        messagelog="O parametro waiting_collect_interval nao esta configurado corretamente. Vide arquivo de configuracao."
+        logmein
+
+        waiting_collect_interval="15"
+        waiting_collect_interval_in_sec="900"
+
+        action="Aviso"
+        messagelog="Utilizando o valor padrao de 15 minutos."
+        logmein
+
+    else
+
+        if [ -z $waiting_collect_interval_in_sec ]; then
+
+            # Converte o tempo de espera em minutos setado na config para segundos:
+            waiting_collect_interval_in_sec="$(expr $waiting_collect_interval \* 60)"
+
+            action="Info"
+            messagelog="Intervalo de coleta de report na B3: $waiting_collect_interval minuto(s)."
+            logmein
+
+        fi
+
+    fi
+}
+
+function function_chk_processed_files () {
+
+    action="function_chk_processed_files"
+    messagelog="Executando funcao de checagem de erros em arquivos de report da B3."
+    logmein
+
+    # Confirma mais uma vez que o arquivo foi baixado:
+    if [ -f "${sendfile_processed}" ]; then
+
+        action="Info"
+        messagelog="Recebido arquivo de retorno da B3: ${sendfile_processed}"
+        logmein
+
+        echo -e "\n${cyn}Validando erros...\n"
+
+        action="Info"
+        messagelog="Validando erros em ${sendfile_processed}"
+        logmein
+
+        # Whitelist:
+        # Aqui eh verificado se o arquivo de report possui mensagem de erro alem daquelas que encontram-se em Whitelist.
+
+        # Pega as mensagens de erro na Whitelist e as separa com um OU logico:
+        b3_error_whitelist_with_logic_or="$(echo -e $b3_error_whitelist  | sed -e "s/,/\\\|/g")"
+
+        # Valida se ha registros com 'Erro arquivo' que nao estejam na Whitelist:
+        if [[ $(grep -w "$phrase_error_report" $sendfile_processed | grep -v "$b3_error_whitelist_with_logic_or") ]]; then
+
+            # Se houver erro fora da whitelist, move o arquivo para o diretorio apropriado.
+            # Tambem move o arquivo enviado que gerou erro no report:
+
+            action="Alerta"
+            messagelog="A B3 apontou erro(s) no conteudo do arquivo ${sendfile}. Sao erros nao presentes na Whitelist."
+            logmein
+
+            action="Alerta"
+            messagelog="O arquivo ${sendfile} e o seu report ${check_out_report} serao movidos para ${sent_files_failure_report_dir}"
+            logmein
+
+            # Move o arquivo de report obtido na B3:
+            mv -f ${sendfile_processed} ${sent_files_failure_report_dir}/
+
+            case $? in
+                0) action="Info";
+                   messagelog="Arquivo ${check_out_report} movido para ${sent_files_failure_report_dir}" ;
+                   logmein;;
+                *) action="Erro" ;
+                   messagelog="Erro ao mover arquivo $check_out_report para ${sent_files_failure_report_dir}" ;
+                   logmein;;
+            esac
+
+            # Move o arquivo enviado para a B3 e que gerou erro no report:
+            mv -f ${sent_files_waiting_b3_report}/${sendfile} ${sent_files_failure_report_dir}/
+
+            case $? in
+                0) action="Info";
+                   messagelog="Arquivo ${sendfile} movido para ${sent_files_failure_report_dir}" ;
+                   logmein;;
+                *) action="Erro" ;
+                   messagelog="Erro ao mover arquivo ${sendfile} para ${sent_files_failure_report_dir}" ;
+                   logmein;;
+            esac
+
+        else
+
+            # Se nao houver erro ou houver apenas erros presentes na Whitelist, move o arquivo para o diretorio apropriado. Tambem move o arquivo enviado para a B3:
+            echo -e "\n${grn}A B3 nao reportou erro no conteudo do arquivo ${sendfile}.${nc}"
+            echo -e "${grn}O arquivo ${sendfile} e o seu report ${check_out_report} serao movidos para ${sent_files_success_report_dir}.${nc}"
+
+            # Aqui eh movido o arquivo de retorno da B3, porem a extensao do arquivo eh alterada para TXT:
+            mv -f ${sendfile_processed} ${sent_files_success_report_dir}/
+
+            case $? in
+               0) action="Info";
+                  messagelog="Arquivo ${check_out_report} movido para ${sent_files_success_report_dir}" ;
+                  logmein;;
+               *) action="Erro" ;
+                  messagelog="Erro ao mover arquivo $check_out_report para ${sent_files_success_report_dir}" ;
+                  logmein;;
+            esac
+
+            # Aqui eh movido o arquivo enviado e processado com sucesso pela B3:
+            mv -f ${sent_files_waiting_b3_report}/${sendfile} ${sent_files_success_report_dir}/
+
+            case $? in
+              0) action="Info";
+                 messagelog="Arquivo ${sendfile} movido para ${sent_files_success_report_dir}" ;
+                 logmein;;
+              *) action="Erro" ;
+                 messagelog="Erro ao mover arquivo ${sendfile} para ${sent_files_success_report_dir}" ;
+                 logmein;;
+            esac
+
+        fi 
+
+    else
+
+        # Tentei forcar esse erro, mas nao consegui. Se vc cair aqui, me conta pfv:
+
+        action="Erro Critico"
+        messagelog="O loop while encontrou o arquivo, mas o condicionamento nao. Investigar snippet009"
+        logmein
+
+        echo -e "\n${red}Erro critico. O loop while encontrou o arquivo, mas o condicionamento nao.${nc}...\n"
+        echo -e "\n${red}Investigar linhas 54 e 108 do snippet009.${nc}...\n"
+
+    fi
+
+}
+
+# Snippet001: Exibe ajuda para o comando b3dispatcher
+usage () {
+
+    action="usage"
+    messagelog="Exibindo ajuda."
+    logmein
+    snippet=${snippets}/snippet001_usage
+    check_snippet_if_exists
+    . ${snippet}
+
+}
+
+# Snippet002: Lista fila de arquivos prontos para envio 
+function function_list_queues {
+
+    action="function_list_queues"
+    messagelog="Executando funcao de listagem da fila de envio."
+    logmein
+    snippet=${snippets}/snippet002_queuelist
+    check_snippet_if_exists
+    . ${snippet}
+
+}
+
+# Snippet003: Envia arquivos para o SFTP da B3
+function function_send {
+
+    action="function_send"
+    messagelog="Executando funcao de envio de arquivos."
+    logmein
+    snippet=${snippets}/snippet003_sendtemplates
+    check_snippet_if_exists
+    . ${snippet}
+    
+}
+
+# Snippet004: Verifica se ha arquivos na fila de envio, mas que nao foram enviados:
+function_run_chk_queue () {
+
+    action="function_run_chk_queue"
+    messagelog="Verificando se ha arquivos nao enviados na fila de envio"
+    logmein
+    snippet=${snippets}/snippet004_chkfailedsents
+    check_snippet_if_exists
+    . ${snippet}
+
+}
+
+# Snippet005: Reprocessa a fila:
+function_run_chk_reprocess () {
+
+    action="function_run_chk_reprocess"
+    messagelog="Executando funcao de checagem de reprocessamento."
+    logmein
+    snippet=${snippets}/snippet005_reprocess
+    check_snippet_if_exists
+    . ${snippet}
+
+}
+
+# Snippet006: Valida o tamanho dos arquivos:
+function_run_chk_file_size () {
+
+    action="function_run_chk_file_size"
+    messagelog="Executando funcao de validacao de tamanho de arquivos."
+    logmein
+    snippet=${snippets}/snippet006_chkfilesize
+    check_snippet_if_exists
+    . ${snippet}
+
+}
+
+# Snippet007: Verifica se o arquivo a ser enviado contem caracteres nao aceitos em seu nome:
+function_run_chk_file_name () {
+
+    action="function_run_chk_file_name"
+    messagelog="Executando funcao de validacao de nomes de arquivos."
+    logmein
+    snippet=${snippets}/snippet007_chkfilename
+    check_snippet_if_exists
+    . ${snippet}
+
+}
+
+# Snippet008: Apos validacoes, move os arquivos para fila de envio:
+function_run_move_files () {
+
+    action="function_run_move_files"
+    messagelog="Executando funcao de movimentacao de arquivos em diretorios."
+    logmein
+    snippet=${snippets}/snippet008_movefile
+    check_snippet_if_exists
+    . ${snippet}
+
+}
+
+# Snippet009: Apos envio dos arquivos, coleta o report da B3:
+function func_collect_reports() {
+
+    action="func_collect_reports"
+    messagelog="Executando funcao de coleta de reports da B3."
+    logmein
+    snippet=${snippets}/snippet009_collector
+    check_snippet_if_exists
+    . ${snippet}
+
+}

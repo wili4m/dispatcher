@@ -1,0 +1,58 @@
+#!/bin/bash
+
+########################################################################################
+#Script Name : B3 Dispatcher Tool - SFTP Streamer
+#Description : Tool to transfer files between My Company and B3 via SFTP protocol.   
+#Author      : Wiliam Freitas
+#Email       : wiliamjf@gmail.com
+#Date        : 2022-03-23
+########################################################################################
+
+# Instanciando configuracoes e funcoes:
+
+scriptheader="/usr/local/etc/b3dispatcher/assets/properties/scriptheader"
+
+# Verifica se o Script Header Existe:
+if [ -e "${scriptheader}" ]; then
+
+    # Se existir, instancia o script para validar configuracoes e funcoes:
+    . ${scriptheader}
+
+else
+
+    # Se nao existir, exibe erro em tela e no log 
+    msg1="Nao foi possivel carregar configuracoes e funcoes."
+    msg2="Arquivo ${scriptheader} nao foi encontrado"
+    echo -e "\n${red}${msg1}.${nc}"
+    echo -e "\n${red}${msg2}.${nc}"
+    messagelog="$msg1 $msg2"
+    logmein
+    exit 1
+
+fi
+
+# Verifica o que esta requisitando o snippet para bloquear requisicoes diretas:
+block_snippet_exec
+
+# Loga no log do sistema a acao que esse script esta realizando:
+actionlog="Snippet004"
+messagelog="Verificando se ha arquivos nao enviados na fila de envio."
+logmein
+
+# Verifica se ha arquivos no diretorio de envio para a b3. Caso haja, eh executada
+# a function de envio de arquivos. Nesse caso eh considerado que houve uma falha
+# no envio dos arquivos, e por isso os arquivos serao enviados.
+
+for file in $(ls -1 ${validation_dir} | grep txt$ | sort | uniq); do
+
+    # Verifica se o arquivo identificado no d4 existe encontrado no d1:
+    if [ -f "${validation_dir}/${file}" ]; then
+
+        actionlog="Snippet004"
+        messagelog="Identificado arquivo com falha de envio: ${file}."
+        logmein
+
+    fi; done
+
+# Chama a function para envio dos arquivos com falha de envio:
+function_send

@@ -1,0 +1,85 @@
+#!/bin/bash
+
+########################################################################################
+#Script Name : B3 Dispatcher Tool - SFTP Streamer
+#Description : Tool to transfer files between My Company and B3 via SFTP protocol.   
+#Author      : Wiliam Freitas
+#Email       : wiliamjf@gmail.com
+#Date        : 2022-03-23
+########################################################################################
+
+# Instanciando configuracoes e funcoes:
+
+scriptheader="/usr/local/etc/b3dispatcher/assets/properties/scriptheader"
+
+# Verifica se o Script Header Existe:
+if [ -e "${scriptheader}" ]; then
+
+    # Se existir, instancia o script para validar configuracoes e funcoes:
+    . ${scriptheader}
+
+else
+
+    # Se nao existir, exibe erro em tela e no log 
+    msg1="Nao foi possivel carregar configuracoes e funcoes."
+    msg2="Arquivo ${scriptheader} nao foi encontrado"
+    echo -e "\n${red}${msg1}.${nc}"
+    echo -e "\n${red}${msg2}.${nc}"
+    messagelog="$msg1 $msg2"
+    logmein
+    exit 1
+
+fi
+
+if [ ! -d ${backup_dir} ]; then
+
+    actionlog="b3backup"
+    messagelog="Erro critico: Diretorio ${backup_dir} nao encontrado."
+    logmein
+
+    echo -e "\n${red}Erro Critico: Diretorio ${backup_dir} nao encontrado.\n"
+    exit 1
+
+fi
+
+# Localiza arquivos criados ha mais do que a qtd de dias configurado em $backup_after:
+for yearFileFound in $(find $templates -type f -iname *txt* -ctime +${backup_after} | grep -v ${backup_dir} | sed -e "s/\// /g" | xargs -n1 | grep txt | sed -e "s/_/ /g" | xargs -n1 | grep ${year} | sort | uniq); do
+
+    # Verifica se diretorio aaaammdd existe no diretório de backup:
+    if [ ! -d ${backup_dir}/${yearFileFound} ]; then
+
+        # Se nao existir, o cria:
+        mkdir ${backup_dir}/${yearFileFound}
+
+        actionlog="b3backup"
+        messagelog="Criado diretório ${backup_dir}/${yearFileFound}."
+        logmein
+
+    fi
+
+    # Identifica os diretorios onde estão os arquivos criados ha mais dias dias do que o valor setado em backup_after:
+    for fileFoundOnDir in $(find $templates -type f -iname *${yearFileFound}* -ctime +${backup_after} | grep -v ${backup_dir} | sed -e "s/\// /g" | awk '{print$3}' | sort | uniq); do
+
+        # Verifica se esses diretorios existem:
+        if [ ! -d "${backup_dir}/${yearFileFound}/${fileFoundOnDir}" ]; then
+
+            # Se nao existir, cria:
+            mkdir ${backup_dir}/${yearFileFound}/${fileFoundOnDir}
+
+            actionlog="b3backup"
+            messagelog="Criado diretório ${backup_dir}/${yearFileFound}/${fileFoundOnDir}."
+            logmein
+
+        fi
+    
+        # Lista cada arquivo criado ha mais dias do que o valor setado em backup_after e suas respectivos diretorios:
+        for fileFound in $(find ${templates}/${fileFoundOnDir}/ -type f -iname *${yearFileFound}* | grep -v ${backup_dir}); do
+
+            fileName="$(echo ${fileFound} | sed -e "s/\// /g" | xargs -n1 | grep txt)"
+
+            # Move o arquivo e seus reports para o backup:
+            mv -f ${fileFound} ${backup_dir}/${yearFileFound}/${fileFoundOnDir} 
+
+            actionlog="b3backup"
+            messagelog="Movendo arquivo ${fileName} para o diretório de backup ${backup_dir}/${yearFileFound}/${fileFoundOnDir}."
+            logmein ; done ; done ; done

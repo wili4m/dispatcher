@@ -1,0 +1,258 @@
+#!/bin/bash
+
+########################################################################################
+#Script Name : B3 Dispatcher Tool - SFTP Streamer
+#Description : Tool to transfer files between My Company and B3 via SFTP protocol.   
+#Author      : Wiliam Freitas
+#Email       : wiliamjf@gmail.com
+#Date        : 2022-03-23
+########################################################################################
+
+# Instanciando configuracoes e funcoes:
+
+scriptheader="/usr/local/etc/b3dispatcher/assets/properties/scriptheader"
+
+# Verifica se o Script Header Existe:
+if [ -e "${scriptheader}" ]; then
+
+    # Se existir, instancia o script para validar configuracoes e funcoes:
+    . ${scriptheader}
+
+else
+
+    # Se nao existir, exibe erro em tela e no log 
+    msg1="Nao foi possivel carregar configuracoes e funcoes."
+    msg2="Arquivo ${scriptheader} nao foi encontrado"
+    echo -e "\n${red}${msg1}.${nc}"
+    echo -e "\n${red}${msg2}.${nc}"
+    messagelog="$msg1 $msg2"
+    logmein
+    exit 1
+
+fi
+
+# Essa variavel sera usada para reportar a qtd de arquivos enviados:
+sentfiles="0"
+
+# Identifica e armazena o numero de cada empresa presente nomes dos arquivos:
+
+# Este loop define o valor das variaveis host, user e pass com base no arquivo de configuracao.
+
+if [[ "$mode_send_files" == "parallel" ]]; then
+
+# Loga no log do sistema a acao que esse script esta realizando:
+actionlog="Snippet003"
+messagelog="Operando em modo paralelo (parallel)."
+logmein
+
+    # Pega toda a lista de nomes aceitos para arquivos da B3:
+    for templateFile in $(echo $set1_files_order $set2_files_order | sed -e "s/,/ /g"); do
+
+        # Verifica se ha arquivos no diretorio de envio cujo os nomes batam com os padroes definidos. Nao exibe arquivos invalidos.
+        fileFound="$(ls -1 ${validation_dir}/ | grep ${templateFile} | grep -v ${invalid_file})"
+
+            # Caso a variavel acima esteja diferente de vazia, entra na condicao do if:
+            if [[ ! -z $fileFound ]]; then 
+
+                actionlog="Snippet003"
+                messagelog="Identificado(s) arquivo(s) na fila de envio."
+                logmein
+
+                # Para cada arquivo encontrado no diretorio de envio e que bata com o padrao de nomes, executa o looping abaixo:
+                for sendfile in $fileFound; do 
+
+                    actionlog="Snippet003"
+                    messagelog="Preparando envio do arquivo ${sendfile}"
+                    logmein
+
+                    # Chama a seguinte function para definir a credencial a ser usada para enviar o arquivo:
+                    func_refeed_var_credentials
+
+                    # Limpa a tela:
+                    clear                
+
+                    echo -e "\n${grn}Enviando arquivo \"${sendfile}\"...${nc}\n"
+
+                    actionlog="Snippet003"
+                    messagelog="Enviando arquivo ${sendfile}"
+                    logmein
+
+                    sftp -i ${!pass} -P ${target_port} ${!user}@${!host}:${target_path}/ <<< $\"put ${validation_dir}/${sendfile}\"
+
+                    # Verifica se o arquivo foi enviado com sucesso.
+                    case $? in
+                        0) sentfiles="$((sentfiles+1))" ;
+                           actionlog="Snippet003" ;
+                           messagelog="Arquivo ${sendfile} enviado com sucesso para a B3." ;
+                           logmein ;;
+                        *) echo -e "\n${ylw}Falha no envio do arquivo ${sendfile}${nc}";
+                           actionlog="Snippet003" ;
+                           messagelog="Falha ao enviar arquivo ${sendfile} para a B3." ;
+                           logmein ;
+                           exit 1;;
+                    esac
+
+                    actionlog="Snippet003"
+                    messagelog="Movendo arquivo ${sendfile} de ${validation_dir} para ${sent_files_waiting_b3_report}"
+                    logmein
+
+                    # Move o arquivo enviado para o diretorio de aguardo de report da b3:
+                    mv -f ${validation_dir}/${sendfile} ${sent_files_waiting_b3_report}/
+
+                    case $? in
+                    0) action="Snippet003";
+                       messagelog="Arquivo ${sendfile} movido para ${sent_files_waiting_b3_report}" ;
+                       logmein;;
+                    *) action="Snippet003" ;
+                       messagelog="Erro ao mover arquivo ${sendfile} para ${sent_files_waiting_b3_report}" ;
+                       logmein;;
+                    esac
+
+                    # Verifica uma vez mais se o arquivo enviado foi movido para o diretorio de aguardo do report da b3:
+                    if [ -e ${sent_files_waiting_b3_report}/${sendfile} ] ; then
+
+                        actionlog="Snippet003"
+                        messagelog="Iniciando looping de coleta do arquivo de retorno."
+                        logmein
+
+                        echo -e "\n${grn}Iniciando looping de coleta... ${nc}\n"
+
+                        # Apos envio do arquivo, eh feita a coleta dele via function:
+                        func_collect_reports
+
+                    else
+
+                        # Tem que rolar alguma bizarrisse para cair nessa condicao, mas por seguranca e para facilitar debugs, aqui esta:
+                        actionlog="Snippet003"
+                        messagelog="Erro de inconsistencia na movimentacao de arquivos. O arquivo ${sendfile} nao foi encontado em ${sent_files_waiting_b3_report}."
+                        logmein
+
+                        echo -e "\n${ylw}Falha ao mover arquivo $sendfile para ${sent_files_waiting_b3_report} ${nc}"
+
+                    fi ; done
+
+            fi; done 
+
+            clear
+
+            if [ "${sentfiles}" -gt "1" ]; then
+
+                actionlog="Snippet003"
+                messagelog="Envio de arquivos concluido. Total de arquivos enviados: ${sentfiles}."
+                logmein
+
+            fi
+            
+            # Exibe resumo dos arquivos enviados:
+            echo -e "${cyn}==> Envio de arquivos concluido.${nc}"
+            echo -e "${cyn}==> Total de arquivos enviados: ${sentfiles}.${nc}\n"
+
+elif [[ "$mode_send_files" == "sequential" ]]; then
+
+    # Loga no log do sistema a acao que esse script esta realizando:
+    actionlog="Snippet003"
+    messagelog="Operando em modo sequencial (sequential)."
+    logmein
+
+    # Loga arquivos na fila de envio antes de comecar a enviar:
+    for file in $(ls -1 ${input_dir} | grep -v ${invalid_file}); do
+
+        actionlog="Snippet003"
+        messagelog="Arquivo na fila de envio: ${file}."
+        logmein ; done
+
+    # Pega toda a lista de nomes aceitos para arquivos da B3:
+    for templateFile in $(echo $set1_files_order $set2_files_order | sed -e "s/,/ /g"); do
+
+        # Verifica se ha arquivos no diretorio de envio cujo os nomes batam com os padroes definidos. Nao exibe arquivos invalidos.
+        for fileFound in $(ls ${validation_dir}/ | grep $templateFile); do
+
+            actionlog="Snippet003"
+            messagelog="Preparando envio do arquivo ${fileFound}"
+            logmein
+
+            # Chama a seguinte function para definir a credencial a ser usada para enviar o arquivo:
+            func_refeed_var_credentials
+
+            sendfile="${fileFound}"
+
+            # Limpa a tela:
+            clear
+
+            echo -e "\n${grn}Enviando arquivo \"${sendfile}\"...${nc}\n"
+
+            actionlog="Snippet003"
+            messagelog="Enviando arquivo ${sendfile}"
+            logmein
+
+            sftp -i ${!pass} -P ${target_port} ${!user}@${!host}:${target_path}/ <<< $"put ${validation_dir}/${sendfile}"
+
+            # Verifica se o arquivo foi enviado com sucesso.
+            case $? in
+                0) sentfiles="$((sentfiles+1))" ;
+                   actionlog="Snippet003" ;
+                   messagelog="Arquivo ${sendfile} enviado com sucesso para a B3." ;
+                   logmein ;;
+                *) echo -e "\n${ylw}Falha no envio do arquivo $sendfile"${nc};
+                   actionlog="Snippet003" ;
+                   messagelog="Falha ao enviar arquivo ${sendfile} para a B3." ;
+                   logmein ;
+                   exit 1;;
+            esac
+
+            actionlog="Snippet003"
+            messagelog="Movendo arquivo ${sendfile} de ${validation_dir} para ${sent_files_waiting_b3_report}"
+            logmein
+
+            # Move o arquivo enviado para o diretorio de aguardo de report da b3:
+            mv -f ${validation_dir}/${sendfile} ${sent_files_waiting_b3_report}/
+
+            case $? in
+            0) action="Snippet003";
+               messagelog="Arquivo ${sendfile} movido para ${sent_files_waiting_b3_report}" ;
+               logmein;;
+            *) action="Snippet003" ;
+               messagelog="Erro ao mover arquivo ${sendfile} para ${sent_files_waiting_b3_report}" ;
+               logmein;;
+            esac
+
+            # Verifica uma vez mais se o arquivo enviado foi movido para o diretorio de aguardo do report da b3:
+            if [ -e ${sent_files_waiting_b3_report}/${sendfile} ] ; then
+
+            actionlog="Snippet003"
+            messagelog="Iniciando looping de coleta do arquivo de retorno."
+            logmein
+
+            echo -e "\n${grn}Iniciando looping de coleta... ${nc}\n"
+
+            # Apos envio do arquivo, eh feita a coleta dele via function:
+            func_collect_reports
+
+            else
+
+                # Tem que rolar alguma bizarrisse para cair nessa condicao, mas por seguranca e para facilitar debugs, aqui esta:
+                actionlog="Snippet003"
+                messagelog="Erro de inconsistencia na movimentacao de arquivos. O arquivo ${sendfile} nao foi encontado em ${sent_files_waiting_b3_report}."
+                logmein
+
+                echo -e "\n${ylw}Falha ao mover arquivo $sendfile para ${sent_files_waiting_b3_report} ${nc}"
+
+            fi ; done ; done
+            
+            if [ "${sentfiles}" -gt "1" ]; then
+
+                actionlog="Snippet003"
+                messagelog="Envio de arquivos concluido. Total de arquivos enviados: ${sentfiles}."
+                logmein
+
+            fi
+
+            echo -e "${cyn}==> Envio de arquivos concluido.${nc}"
+            echo -e "${cyn}==> Total de arquivos enviados: ${sentfiles}.${nc}\n"
+
+else
+
+    echo -e "\n${red}Erro Critico! Parametro \"mode_send_files\" mal configurado.\nO valor deveria ser \"parallel\" ou \"sequential\".${nc}"
+    exit 1
+
+fi

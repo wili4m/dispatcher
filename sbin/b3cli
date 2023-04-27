@@ -1,0 +1,77 @@
+#!/bin/bash
+
+########################################################################################
+#Script Name : B3 Dispatcher Tool - SFTP Streamer
+#Description : Tool to transfer files between My Company and B3 via SFTP protocol.   
+#Author      : Wiliam Freitas
+#Email       : wiliamjf@gmail.com
+#Date        : 2022-03-23
+########################################################################################
+
+# O arquivo scriptheader instancia configuracoes e verifica se o arquivo de funcoes existe.
+
+scriptheader="/usr/local/etc/b3dispatcher/assets/properties/scriptheader"
+
+# Verifica se o scriptheader existe.
+if [ -e "${scriptheader}" ]; then
+
+    # Caso exista, executa o arquivo.
+    . ${scriptheader}
+
+else
+
+    # Caso nao exista, dara erro e aborda o script:
+    echo -e "\nNao foi possivel carregar configuracoes e funcoes."
+    echo -e "Arquivo ${scriptheader} nao foi encontrado\n"
+    exit 1
+
+fi
+
+# Verifica se o dialog esta instalado:
+which dialog 1> /dev/null 2>&1
+
+case $? in
+    1)  echo -e "\n${red}Ooops... falha ao executar b3cli devido a uma pendencia nao atendida.${nc}" ;
+        echo -e "\nInfo: O b3cli depende do comando \"dialog\" que nao esta instalado." ;
+        echo -e "\nVoce possui as seguintes opcoes:\n"; 
+        echo -e " 1 - Usar o b3dispatcher ao inves do b3cli;" ;
+        echo -e " 2 - Instalar o comando \"dialog\"." ;
+        echo -e "\nPara instalar o \"dialog\", use o comando abaixo:\n";
+        echo -e "Debian GNU/Linux: ${grn}apt-get install dialog${nc}" ;
+        echo -e "Redhat GNU/Linux: ${grn}yum install dialog${nc}\n" ;
+        exit 1 ;;
+esac
+
+# O Subshell abaixo eh executado e a opcao selecionada torna-se o valor da variavel "menu":
+menu=$(dialog --backtitle "B3 Dispatcher. Sistema para envio de arquivos via SFTP." --title "MENU" --radiolist "Escolha a opcao:" 12 60 4 \
+	"1" "Validar arquivos do diretorio de entrada" OFF \
+	"2" "Listar arquivos validados e que aguardam envio" OFF \
+	"3" "Listar arquivos com report de falha" OFF \
+	"4" "Validar e enviar arquivos para a B3" OFF --stdout)
+
+# Entra na condicao abaixo se nenhuma opcao foi selecionada:
+if [ -z $menu ]; then
+
+    echo -e "\n${grn}Ajuda do ${cli_name}:${nc}"
+
+    echo -e "\nSao necessarias duas acoes: Selecionar e Confirmar/Cancelar."
+
+    echo -e "\n${cyn}Selecionando o item${nc}: Use as teclas de direcao para selecionar o item do menu."
+    echo -e "Perceba que ha um numero a frente de cada item. Alternativamente pode-se usar"
+    echo -e "o numero da opcao desejada para seleciona-la. Selecionada a opcao, eh preciso"
+    echo -e "confirmar teclando barra de espacos."
+
+    echo -e "\n${cyn}Confirmando${nc}: Para confirmar ou cancelar, basta utilizar a tecla TAB.\n"
+
+# Caso alguma opcao tenha sido selecionada, verifica qual:
+else
+
+	case $menu in
+        1) ${tool} --validate ;; # Faz as validacoes no diretorio de entrada de arquivos.
+        2) ${tool} --list ;; # Lista os arquivos ja validados e que estao prontos para envio.
+        3) ${tool} --report ;; # Exibe arquivos que nao passaram na validacao ou foram recusados pela b3.
+        4) ${tool} --sendfiles ;; # Faz todo o processo de validacao ate o envio dos arquivos.
+        *) usage ;; # Olha, pra entrar aqui o cara tem que caprichar no erro, mas ta aqui se precisar.
+	esac
+
+fi

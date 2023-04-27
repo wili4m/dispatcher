@@ -1,0 +1,155 @@
+#!/bin/bash
+
+########################################################################################
+#Script Name : B3 Dispatcher Tool - SFTP Streamer
+#Description : Tool to transfer files between My Company and B3 via SFTP protocol.   
+#Author      : Wiliam Freitas
+#Email       : wiliamjf@gmail.com
+#Date        : 2022-03-23
+########################################################################################
+
+# Instanciando configuracoes e funcoes:
+
+scriptheader="/usr/local/etc/b3dispatcher/assets/properties/scriptheader"
+
+# Verifica se o Script Header Existe:
+if [ -e "${scriptheader}" ]; then
+
+    # Se existir, instancia o script para validar configuracoes e funcoes:
+    . ${scriptheader}
+
+else
+
+    # Se nao existir, exibe erro em tela e no log 
+    msg1="Nao foi possivel carregar configuracoes e funcoes."
+    msg2="Arquivo ${scriptheader} nao foi encontrado"
+    echo -e "\n${red}${msg1}.${nc}"
+    echo -e "\n${red}${msg2}.${nc}"
+    messagelog="$msg1 $msg2"
+    logmein
+    exit 1
+
+fi
+
+# Verifica o que esta requisitando o snippet para bloquear requisicoes diretas:
+block_snippet_exec
+
+# Loga no log do sistema a acao que esse script esta realizando:
+actionlog="Snippet005"
+messagelog="Executando reprocessamento de arquivo."
+logmein
+
+# Verifica se ha arquivos no diretorio de apontamentos da b3. Caso haja, para cada
+# arquivo do d4, eh feita uma busca no diretorio de entrada. Se o arquivo for encontrado
+# no diretorio de entrada, eh verificado se ha diferencas nos arquivos:
+
+for file in $(ls -1 ${sent_files_failure_report_dir} | grep txt$ | sort | uniq); do
+
+    # Verifica se o arquivo identificado no d4 existe encontrado no d1:
+    if [ -f "${input_dir}/${file}" ]; then
+
+        actionlog="Snippet005"
+        messagelog="Reprocessamento identificado: ${file}."
+        logmein
+
+        # Se sim, eh feita uma comparacao de hashs:
+        md5ReprocessFile="$(md5sum ${sent_files_failure_report_dir}/${file} | awk '{print$1}')"
+        md5InFile="$(md5sum ${input_dir}/${file} | awk '{print$1}')"
+
+        # Aqui a comparacao eh realizada:
+        if [[ $md5ReprocessFile == $md5InFile ]]; then
+
+            actionlog="Snippet005"
+            messagelog="O arquivo recusado pela B3 e o arquivo disponibilizado na raiz sao o mesmo arquivo."
+            logmein
+
+            actionlog="Snippet005"
+            messagelog="MD5 do novo arquivo: $md5InFile"
+            logmein
+            
+            actionlog="Snippet005"
+            messagelog="MD5 do arquivo anterior: $md5ReprocessFile"
+            logmein
+
+            # Verifica se o arquivo na raiz eh identico ao recusado. Se sim, reporta erro:
+            case $silent in 
+            0) function_include_bar ;
+                echo -e "\n${cyn}Validacao de arquivo de reprocesso:${nc}" ;
+                function_include_bar ;
+                echo "" ;
+                echo -e "\n${red}>>> Irregularidade identificada${nc}"
+                echo -e "\n${ylw}O arquivo ja processado e reportado com erro pela B3 foi disponibilizado no diretorio de entrada do Dispatcher.${nc}"
+
+                echo -e "\nMD5SUM dos arquivos envolvidos:"
+
+                echo -e "\n${red}[${nc}${cyn}${md5InFile}${nc}${red}]${nc} - ${input_dir}/${file}" ;
+                echo -e "${red}[${nc}${cyn}${md5ReprocessFile}${nc}${red}]${nc} - ${sent_files_failure_report_dir}/${file} ${red} * "
+                                
+                echo -e "\n${red} * Arquivo ja reportado com erro pela b3.${nc}" ;
+
+                echo -e "\n>>> Nota : Espera-se que o arquivo ${file} tenha as correcoes para envio para B3."
+                echo -e "           Da forma como esta, havera os mesmos apontamentos."
+                echo -e "\n${ylw}>>> Observacao: Corrija o arquivo ${file} e somente o inclua em ${input_dir} apos faze-lo.${nc}" ;;
+            esac
+
+            actionlog="Snippet005"
+            messagelog="Renomeando arquivo em ${input_dir} de ${file} para ${file}.${invalid_file}"
+            logmein
+
+            # Renomeia o arquivo do diretorio de entrada para que saia da operacao da Tool:
+            mv -f ${input_dir}/${file} ${input_dir}/${file}.${invalid_file}
+
+            case $? in
+            0) action="Snippet005";
+               messagelog="Arquivo ${sendfile} renomeado para ${file}.${invalid_file} em ${input_dir}" ;
+               logmein;;
+            *) action="Snippet005" ;
+               messagelog="Erro ao renomear arquivo ${sendfile} em ${input_dir}" ;
+               logmein;;
+            esac
+
+        else
+
+            actionlog="Snippet005"
+            messagelog="O novo arquivo ${file} foi aceito pelo ${tool_name} e sera validado."
+            logmein
+
+            actionlog="Snippet005"
+            messagelog="MD5 do novo arquivo: $md5InFile"
+            logmein
+            
+            actionlog="Snippet005"
+            messagelog="MD5 do arquivo anterior: $md5ReprocessFile"
+            logmein
+
+            # Em caso de reprocessamento onde o novo arquivo eh diferente do arquivo ja processado,
+            # o arquivo ja processado que gerou erros na B3 eh removido.
+
+            # Confirma que o arquivo ja processado realmente esta no diretorio de apontamentos de falha
+            if [ -f "${sent_files_failure_report_dir}/${file}" ]; then
+
+            actionlog="Snippet005"
+            messagelog="Removendo arquivo ${sent_files_failure_report_dir}/${file}."
+            logmein
+
+                # Remove o arquivo:
+                rm -f ${sent_files_failure_report_dir}/${file}
+
+                case $? in
+                0) action="Snippet005";
+                   messagelog="Arquivo ${sendfile} removido de ${sent_files_failure_report_dir}" ;
+                   logmein;;
+                *) action="Snippet005" ;
+                   messagelog="Falha ao remover arquivo ${sendfile} de ${sent_files_failure_report_dir}";
+                   logmein;;
+                esac
+
+            fi
+
+            actionlog="Snippet005"
+            messagelog="Iniciando validacoes em ${input_dir}/${file}"
+            logmein
+
+        fi
+  
+    fi; done

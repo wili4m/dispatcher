@@ -1,0 +1,270 @@
+#!/bin/bash
+
+########################################################################################
+#Script Name : B3 Dispatcher Tool - SFTP Streamer
+#Description : Tool to transfer files between My Company and B3 via SFTP protocol.   
+#Author      : Wiliam Freitas
+#Email       : wiliamjf@gmail.com
+#Date        : 2022-03-23
+########################################################################################
+
+# Instanciando configuracoes e funcoes:
+
+scriptheader="/usr/local/etc/b3dispatcher/assets/properties/scriptheader"
+
+# Verifica se o Script Header Existe:
+if [ -e "${scriptheader}" ]; then
+
+    # Se existir, instancia o script para validar configuracoes e funcoes:
+    . ${scriptheader}
+
+else
+
+    # Se nao existir, exibe erro em tela e no log 
+    msg1="Nao foi possivel carregar configuracoes e funcoes."
+    msg2="Arquivo ${scriptheader} nao foi encontrado"
+    echo -e "\n${red}${msg1}.${nc}"
+    echo -e "\n${red}${msg2}.${nc}"
+    messagelog="$msg1 $msg2"
+    logmein
+    exit 1
+
+fi
+
+# Verifica o que esta requisitando o snippet para bloquear requisicoes diretas:
+block_snippet_exec
+
+actionlog="Snippet009"
+messagelog="Coletando arquivo(s) de report da B3"
+logmein
+
+# Verifica se o arquivo enviado esta no diretorio de aguardo de report da b3:
+if [ ! -e ${sent_files_waiting_b3_report}/${sendfile} ] ; then
+
+    echo -e "\n${ylw}O arquivo $sendfile nao foi localizado em ${sent_files_waiting_b3_report}"${nc}
+
+    actionlog="Snippet009"
+    messagelog="O arquivo $sendfile enviado para a B3 nao foi localizado em ${sent_files_waiting_b3_report}."
+    logmein
+
+# Se o arquivo enviado esta no diretorio de aguardo, verifica se o arquivo ja foi processado na b3:
+else 
+    
+    # Numero de tentativas:
+    strikes="0"
+
+    actionlog="Snippet009"
+    messagelog="Inicializando contador de tentativas de coleta do report para o arquivo ${sendfile}. Numero de tentativas: $strikes."
+    logmein
+
+    # Variavel com o arquivo a ser baixado da B3. Enquanto o arquivo nao for
+    # baixado, mantem o loop ativo. Ao fim do loop, o arquivo sera movido para
+    # outro diretorio
+
+    b3_return_file_name="${sendfile}.[0-9][0-9][0-9][0-9][0-9][0-9][0-9]"
+
+    sendfile_processed="${sent_files_waiting_b3_report}/${b3_return_file_name}"
+
+    while [ ! -f ${sendfile_processed} ]
+
+    do
+
+        actionlog="Snippet009"
+        messagelog="Aguardando arquivo de report da B3 para arquivo enviado ${sendfile}."
+        logmein
+
+        # Determina o tempo de espera para coleta dos arquivos no FTP da B3:
+        # O valor padrao eh definido na configuracao da tool. Esse valor eh
+        # especificado em minutos, mas a tool o converte para segundos atraves
+        # da seguinte function:
+
+        set_sleep_to_recollect
+
+        # Aguarda o intervalo definido pela function acima
+
+        if [ "$waiting_collect_interval_in_sec" -le "60" ]; then
+        
+            actionlog="Snippet009"
+            messagelog="Aguardando tempo para coleta: $waiting_collect_interval_in_sec segundos."
+            logmein
+            minOrSec="sec"
+
+            echo -e "\n${cyn}>>> Aguardando tempo para coleta: $waiting_collect_interval_in_sec segundos${nc}"
+
+        elif [ "$waiting_collect_interval_in_sec" -eq "60" ]; then
+
+            actionlog="Snippet009"
+            messagelog="Aguardando tempo para coleta: $waiting_collect_interval minuto."
+            logmein
+            minOrSec="min"
+
+            echo -e "\n${cyn}>>> Aguardando tempo para coleta: $waiting_collect_interval minuto${nc}"
+
+        else
+
+            actionlog="Snippet009"
+            messagelog="Aguardando tempo para coleta: $waiting_collect_interval minutos."
+            logmein
+            minOrSec="mins"
+
+            echo -e "\n${cyn}>>> Aguardando tempo para coleta: $waiting_collect_interval minutos${nc}"
+
+        fi
+
+        sleep $waiting_collect_interval_in_sec
+
+        # Incrementa o numero de tentativas:
+        strikes=$((strikes+1))
+
+        actionlog="Snippet009"
+        messagelog="Numero de tentativas de coleta de report do arquivo ${sendfile}: $strikes."
+        logmein
+
+        echo -e "\n${cyn}Verificando se o arquivo esta disponivel. Tentativa numero ${strikes}.${nc}"
+
+        # Identifica os IDs dos arquivos de report ja baixados para nao baixar os mesmos arquivos:
+        b3ids="$(ls -1 ${sent_files_failure_report_dir} ${sent_files_success_report_dir} | grep ${b3_return_file_name} | cut -d. -f3)"
+        b3ids="$(echo $b3ids | sed -e "s/ /\\\|/g")"
+        
+        # Verifica se a variavel esta vazia. Se estiver, significa que nenhum ID foi obtido na B3:
+        if [ -z $b3ids ]; then
+
+            # Se nao houver IDs, executa o check de arquivos sem usar filtros:
+            check_out_report="$(sftp -i ${!pass} -P ${target_port} ${!user}@${!host}:${reports_path}/ <<< $"ls" | xargs -n1 | grep "${sendfile}.[0-9][0-9][0-9][0-9][0-9][0-9][0-9]")"
+
+            actionlog="Snippet009"
+            messagelog="Verificando se ha report do arquivo ${sendfile} na B3."
+            logmein
+
+        else
+
+            # Filtra a lista de arquivos disponiveis no FTP da B3:
+            check_out_report="$(sftp -i ${!pass} -P ${target_port} ${!user}@${!host}:${reports_path}/ <<< $"ls" | xargs -n1 | grep "${sendfile}.[0-9][0-9][0-9][0-9][0-9][0-9][0-9]" | grep -v "$b3ids")"
+
+            actionlog="Snippet009"
+            messagelog="Verificando se ha report do arquivo ${sendfile} na B3. Filtrando ID(s) ${b3ids}."
+            logmein
+
+        fi
+
+        # Verifica se a variavel contem valor. Se sim, ou seja, se a variavel for diferente de vazia,
+        # significa que um arquivo foi identificado na B3. Esse arquivo sera baixado:
+
+        if [[ ! -z "$check_out_report" ]]; then
+
+            # Primeiro verifica se por algum motivo esse arquivo ja se encontra no servidor da tool
+            # o que seria muito pouco provavel, mas pode ocorrer em casos excepcionais.
+
+            check_out_report_last_file="$(echo $check_out_report | xargs -n1 | tail -n1)"
+
+            check_out_report_qtt="$(echo $check_out_report | xargs -n1 | wc -l)"
+
+            if [ "$check_out_report_qtt" -ge "2" ]; then
+
+                actionlog="Snippet009"
+                messagelog="Foi identificado mais de um report para o arquivo ${sendfile} na B3. Isso ocorre quando (1) o report anterior do arquivo ${sendfile} foi removido de ${sent_files_failure_report_dir} ou (2) em casos de interrupcao do download do reporte seguido por um reprocessamento."
+                logmein
+
+                actionlog="Snippet009"
+                messagelog="Todos arquivos de report de ${sendfile} serao baixados da B3, mas somente o ultimo sera validada a existencia de erros."
+                logmein
+
+                for each_check_out_report in $check_out_report; do
+
+                    if [[ ! -e "${sent_files_waiting_b3_report}/${each_check_out_report}" ]]; then
+
+                        echo -e "\n${grn}Baixando report ${each_check_out_report}...${nc}"
+
+                        actionlog="Snippet009"
+                        messagelog="Baixando report ${each_check_out_report}."
+                        logmein
+
+                        # Se o arquivo nao existir no servidor da tool, faz download:
+                        sftp -i ${!pass} -P ${target_port} ${!user}@${!host}:${reports_path}/${each_check_out_report} ${sent_files_waiting_b3_report}/
+                        check_out_report="${each_check_out_report}"
+                        sendfile_processed="${sent_files_waiting_b3_report}/${check_out_report}"
+
+                        actionlog="Snippet009"
+                        messagelog="Arquivo de report ${each_check_out_report} baixado com sucesso. Validando erros."
+                        logmein
+
+                        function_chk_processed_files
+
+                        break
+
+                    fi;done
+
+            else
+
+                actionlog="Snippet009"
+                messagelog="Identificado report $check_out_report na B3. Iniciando download do arquivo."
+                logmein
+
+                sftp -i ${!pass} -P ${target_port} ${!user}@${!host}:${reports_path}/${check_out_report} ${sent_files_waiting_b3_report}/
+
+            fi
+
+            # Verifica se o arquivo foi baixado com sucesso:
+            if [[ -e "${sent_files_waiting_b3_report}/${check_out_report}" ]]; then
+
+                actionlog="Snippet009"
+                messagelog="Arquivo de report ${check_out_report} baixado com sucesso. Validando erros."
+                logmein
+
+                echo -e "\n${grn}Arquivo ${check_out_report} baixado com sucesso.${nc}\n"
+
+                # Se o arquivo foi baixado com sucesso, altera o valor da variavel para sair do looping
+                sendfile_processed="${sent_files_waiting_b3_report}/${check_out_report}"
+                function_chk_processed_files
+                break
+
+            fi
+
+        else
+
+            # Loga informacao da proxima tentativa de coleta do report:
+
+            actionlog="Snippet009"
+
+            case $minOrSec in
+             sec) messagelog="No momento nao ha arquivo de report na B3 para o arquivo ${sendfile}. Uma nova tentativa sera feita em ${waiting_collect_interval_in_sec} segundos." ;;
+             min) messagelog="No momento nao ha arquivo de report na B3 para o arquivo ${sendfile}. Uma nova tentativa sera feita em ${waiting_collect_interval} minuto." ;;
+             *) messagelog="No momento nao ha arquivo de report na B3 para o arquivo ${sendfile}. Uma nova tentativa sera feita em ${waiting_collect_interval} minutos." ;;
+            esac
+
+            logmein
+
+            echo -e "\n${ylw}No momento nao ha arquivo de retorno da B3 para o arquivo ${sendfile}.${nc}"
+            echo -e "\n${ylw}Uma nova tentativa sera feita em ${waiting_collect_interval} minuto(s).${nc}\n"
+
+            if [ -z $check_out_report ]; then
+
+                echo -e "${cyn} >>> SFTP File Found:${nc} ${red}Not yet${nc}"
+
+            else
+
+                echo -e "${cyn} >>> SFTP File Found:${nc} ${pur}${check_out_report}${nc}"
+
+            fi
+
+            echo -e "${cyn} >>> Sent file to B3:${nc} ${pur}${sendfile}${nc}"
+            echo -e "${cyn} >>> Report expected:${nc} ${pur}${sendfile_processed}${nc}"
+            echo -e "${cyn} >>> IDs that i have:${nc} ${pur}${b3ids}${nc}\n"
+
+            if [ -z $b3ids ]; then
+
+                 echo -e "${red}${debug}${nc}\n"
+                 echo -e "${pur}sftp -i ${!pass} -P ${target_port} ${!user}@${!host}:${reports_path}/ <<< $'ls' | xargs -n1 | grep ${b3_return_file_name}\n"
+
+            else
+
+                echo -e "${red}${debug}${nc}\n"
+                echo -e "${pur}sftp -i ${!pass} -P ${target_port} ${!user}@${!host}:${reports_path}/ <<< $'ls' | xargs -n1 | grep ${b3_return_file_name} | grep -v "${b3ids}"\n"
+
+            fi
+
+        fi
+
+    done
+
+fi

@@ -1,0 +1,132 @@
+#!/bin/bash
+
+########################################################################################
+#Script Name : B3 Dispatcher Tool - SFTP Streamer
+#Description : Tool to transfer files between My Company and B3 via SFTP protocol.   
+#Author      : Wiliam Freitas
+#Email       : wiliamjf@gmail.com
+#Date        : 2022-03-23
+########################################################################################
+
+# Instanciando configuracoes e funcoes:
+
+scriptheader="/usr/local/etc/b3dispatcher/assets/properties/scriptheader"
+
+# Verifica se o Script Header Existe:
+if [ -e "${scriptheader}" ]; then
+
+    # Se existir, instancia o script para validar configuracoes e funcoes:
+    . ${scriptheader}
+
+else
+
+    # Se nao existir, exibe erro em tela e no log 
+    msg1="Nao foi possivel carregar configuracoes e funcoes."
+    msg2="Arquivo ${scriptheader} nao foi encontrado"
+    echo -e "\n${red}${msg1}.${nc}"
+    echo -e "\n${red}${msg2}.${nc}"
+    messagelog="$msg1 $msg2"
+    logmein
+    exit 1
+
+fi
+
+# Verifica o que esta requisitando o snippet para bloquear requisicoes diretas:
+block_snippet_exec
+
+clear
+
+# Verifica se ha arquivos aguardando validacoes:
+if [[ -f "${sent_files_waiting_b3_report}/${sendfile}" ]]; then
+
+    # Loga no log do sistema a acao que esse script esta realizando:
+    actionlog="Snippet002"
+    messagelog="Exibindo a arquivo em processo de envio."
+    logmein
+
+    # Exibe barra:
+    function_include_bar ;
+    echo -e "\n${pur}>>> Fila do Dispatcher: Arquivo sendo enviado:${nc}"
+    function_include_bar
+    echo ''
+
+    filesize="$(du -sh ${sent_files_waiting_b3_report}/${sendfile} | awk '{print$1}')"
+
+    # Aqui os arquivos sao exibidos, um a um:
+    echo -e "${grn}>>>${nc} ${pur}Arquivo${nc} : ${sendfile}"
+    echo -e "${grn}>>>${nc} ${pur}Posicao${nc} : Arquivo enviado. Aguardando report da B3."
+    echo -e "${grn}>>>${nc} ${pur}Tamanho${nc} : ${filesize}\n"
+
+    actionlog="Snippet002"
+    messagelog="Arquivo: ${file}. Tamanho: ${filesize}. Status: Arquivo enviado. Aguardando report da B3."
+    logmein
+
+fi
+
+# Verifica se ha arquivos aguardando validacoes:
+if [[ $(find $input_dir | grep -v ${invalid_file} | wc -l) -ge "2" ]] ; then
+
+    # Loga no log do sistema a acao que esse script esta realizando:
+    actionlog="Snippet002"
+    messagelog="Foram identificados os seguintes arquivos aguardando validacoes do Dispatcher."
+    logmein
+
+    # Exibe barra:
+    function_include_bar ;
+    echo -e "\n${pur}>>> Fila do Dispatcher: Arquivos aguardando validacoes:${nc}"
+    function_include_bar
+    echo ''
+
+    for file in $(ls -1 ${input_dir} | grep -v ${invalid_file}); do
+
+        filesize="$(du -sh ${input_dir}/${file} | awk '{print$1}')"
+
+        # Aqui os arquivos sao exibidos, um a um:
+        echo -e "${grn}>>>${nc} ${pur}Arquivo${nc} : ${file}"
+        echo -e "${grn}>>>${nc} ${pur}Posicao${nc} : Aguardando validacoes do Dispatcher."
+        echo -e "${grn}>>>${nc} ${pur}Tamanho${nc} : ${filesize}\n"
+
+        actionlog="Snippet002"
+        messagelog="Arquivo: ${file}. Tamanho: ${filesize}. Status: Aguardando Valicacoes."
+        logmein ; done
+
+fi
+
+# Verifica se o diretorio de arquivos existe:
+if [[ $(find $validation_dir | wc -l) -ge "2" ]] ; then
+
+    # Loga no log do sistema a acao que esse script esta realizando:
+    actionlog="Snippet002"
+    messagelog="Foram identificados os seguintes arquivos aguardando envio para a B3."
+    logmein
+
+    # Exibe barra:
+    function_include_bar ;
+    echo -e "\n${pur}>>> Fila do Dispatcher: Arquivos validados e aguardando envio para a B3:${nc}"
+    function_include_bar
+    echo ''
+
+    for file in $(ls -1 $validation_dir); do
+
+        # Para cada arquivo eh verificado o tamanho do mesmo:
+        filesize="$(du -sh ${validation_dir}/${file} | awk '{print$1}')"
+
+        # Aqui os arquivos sao exibidos, um a um:
+        echo -e "${grn}>>>${nc} ${pur}Arquivo${nc} : ${file}"
+        echo -e "${grn}>>>${nc} ${pur}Posicao${nc} : Aguardando Envio"
+        echo -e "${grn}>>>${nc} ${pur}Tamanho${nc} : ${filesize}\n";
+        
+        actionlog="Snippet002"
+        messagelog="Arquivo: ${file}. Tamanho: ${filesize}. Status: Aguardando Envio."
+        logmein ; done 
+
+else
+
+    # Caso nao existam arquivos a serem enviados, mas existam arquivos aguardando validacao, loga a mensagem abaixo:
+    actionlog="Snippet002"
+    messagelog="No momento nao ha arquivos a serem enviados para a B3, mas ha arquivos aguardando validacao."
+    logmein
+
+    exit 1
+
+fi

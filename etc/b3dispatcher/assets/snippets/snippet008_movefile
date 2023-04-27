@@ -1,0 +1,58 @@
+#!/bin/bash
+
+########################################################################################
+#Script Name : B3 Dispatcher Tool - SFTP Streamer
+#Description : Tool to transfer files between My Company and B3 via SFTP protocol.   
+#Author      : Wiliam Freitas
+#Email       : wiliamjf@gmail.com
+#Date        : 2022-03-23
+########################################################################################
+
+# Instanciando configuracoes e funcoes:
+
+scriptheader="/usr/local/etc/b3dispatcher/assets/properties/scriptheader"
+
+# Verifica se o Script Header Existe:
+if [ -e "${scriptheader}" ]; then
+
+    # Se existir, instancia o script para validar configuracoes e funcoes:
+    . ${scriptheader}
+
+else
+
+    # Se nao existir, exibe erro em tela e no log 
+    msg1="Nao foi possivel carregar configuracoes e funcoes."
+    msg2="Arquivo ${scriptheader} nao foi encontrado"
+    echo -e "\n${red}${msg1}.${nc}"
+    echo -e "\n${red}${msg2}.${nc}"
+    messagelog="$msg1 $msg2"
+    logmein
+    exit 1
+
+fi
+
+# Loga no log do sistema a acao que esse script esta realizando:
+actionlog="Snippet008"
+messagelog="Verificando existencia de arquivos validados e preparando envio."
+logmein
+
+# Verifica cada arquivo presente no diretorio de entrada:
+for fileSend in $(ls -1 ${input_dir} | grep -v ${invalid_file}); do
+
+    # Pega na configuracao a lista de nomes aceitos: 
+    for filename in $(echo $set1_files_order $set2_files_order | sed -e "s/,//g"); do
+
+        # Verifica se o arquivo identificado possui nomenclatura padrao:
+        if [[ $(echo $fileSend | grep $filename) ]]; then
+
+            # Se sim, move o arquivo para o diretorio de envio para a B3
+            mv ${input_dir}/${fileSend} ${validation_dir}/
+
+            # Verifica se foi movido com sucesso:
+            case $? in
+              0) actionlog="Snippet008";
+                 messagelog="O arquivo ${fileSend} movido para a fila de envio." ;
+                 logmein ;;
+            esac
+
+        fi; done; done

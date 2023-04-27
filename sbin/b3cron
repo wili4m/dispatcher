@@ -1,0 +1,76 @@
+#!/bin/bash
+
+########################################################################################
+#Script Name : B3 Dispatcher Tool - SFTP Streamer
+#Description : Tool to transfer files between My Company and B3 via SFTP protocol.   
+#Author      : Wiliam Freitas
+#Email       : wiliamjf@gmail.com
+#Date        : 2022-03-23
+########################################################################################
+
+# Instanciando configuracoes e funcoes:
+
+scriptheader="/usr/local/etc/b3dispatcher/assets/properties/scriptheader"
+
+# Verifica se o Script Header Existe:
+if [ -e "${scriptheader}" ]; then
+
+    # Se existir, instancia o script para validar configuracoes e funcoes:
+    . ${scriptheader}
+
+else
+
+    # Se nao existir, exibe erro em tela e no log 
+    msg1="Nao foi possivel carregar configuracoes e funcoes."
+    msg2="Arquivo ${scriptheader} nao foi encontrado"
+    echo -e "\n${red}${msg1}.${nc}"
+    echo -e "\n${red}${msg2}.${nc}"
+    messagelog="$msg1 $msg2"
+    logmein
+    exit 1
+
+fi
+
+# Verifica se ha arquivos no diretorio raiz:
+if [[ $(ls -1 $input_dir | grep -v $invalid_file) ]]; then
+
+    # Primeiro, verifica se ha um processo do dispatcher validando ou enviando arquivos.
+    # Se sim, aborta execucao:
+    get_lock
+
+    # Determina horario de inicio da execucao:
+    start_execution_hour=$(date +%H)
+
+    # Determina o minuto de inicio da execucao:
+    start_execution_minute=$(date +%M)
+
+    actionlog="b3cron"
+    messagelog="Arquivos identificados no diretorio ${input_dir}."
+    logmein
+
+    actionlog="b3cron"
+    messagelog="Ferramenta ${tool_cron_name} em execucao."
+    logmein
+
+    # Reprocessa arquivos recusados pela B3 (se houver):
+    function_run_chk_reprocess
+
+    # Verifica nome dos arquivos no diretorio inputdir 
+    function_run_chk_file_name
+
+    # Verifica o tamanho dos arquivos no inputdir:    
+    function_run_chk_file_size
+
+    # Move arquivos do inputdir para queue:
+    function_run_move_files
+    
+    # Envia arquivos:    
+    function_send
+
+    # Chama a function para fazer o calculo do tempo de execucao:
+    function_calculate_execution_time
+
+    # Remove o arquivo de lock:
+    del_lock
+
+fi
