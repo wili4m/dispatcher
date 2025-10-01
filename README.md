@@ -1,6 +1,8 @@
 #B3 Dispatcher - B2B SFTP Stream
 
-O **B3 Dispatcher** é uma **ferramenta** B2B concebida para o envio **automatizado** de arquivos via **SFTP** para a [B3](https://www.b3.com.br/pt_br/).
+O **B3 Dispatcher** é uma **ferramenta** B2B que desenvolvi para o envio **automatizado** de arquivos via **SFTP** para a [B3](https://www.b3.com.br/pt_br/) em atendimento a demandas de um cliente.
+
+> O software não mais é utilizado pelo cliente, e por esse motivo está disponibilizado aqui no Github.
 
 A tool, basicamente, recebe **arquivos em um diretório específico**, realiza **validações**, **organiza a ordem** de envio dos arquivos, pois há uma ordem específica, e **os envia para a B3** caso passem nas validações. Caso não passem, os arquivos são mantidos em um diretório apartado.
 
